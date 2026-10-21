@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>夸克私人影院</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen font-sans">
+
+  <!-- 顶部导航 -->
+  <header class="sticky top-0 z-30 bg-zinc-900/80 backdrop-blur border-b border-zinc-800 px-6 py-4 flex justify-between items-center">
+    <div class="flex items-center gap-3">
+      <span class="text-xl font-bold tracking-wider bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">QUARK CINEMA</span>
+      <span id="mode-badge" class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">精选海报</span>
+    </div>
+    <div class="flex gap-3">
+      <button onclick="switchMode('poster')" class="text-sm px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 transition">精选海报</button>
+      <button onclick="switchMode('folder', '/quark')" class="text-sm px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 transition">夸克网盘目录</button>
+    </div>
+  </header>
+
+  <!-- 播放器弹窗 -->
+  <div id="player-modal" class="fixed inset-0 z-50 hidden bg-black/90 flex flex-col items-center justify-center p-4">
+    <div class="w-full max-w-5xl flex justify-between items-center mb-3">
+      <h2 id="playing-title" class="text-lg font-medium text-zinc-200 truncate">正在播放</h2>
+      <button onclick="closePlayer()" class="px-3 py-1 rounded bg-zinc-800 hover:bg-red-600 text-sm transition">关闭 [ESC]</button>
+    </div>
+    <div id="artplayer-container" class="w-full max-w-5xl aspect-video bg-black rounded-lg overflow-hidden shadow-2xl border border-zinc-800"></div>
+  </div>
+
+  <!-- 海报网格容器 -->
+  <main class="max-w-7xl mx-auto p-6">
+    <!-- 目录面包屑返回栏 -->
+    <div id="breadcrumb" class="hidden mb-4 flex items-center justify-between bg-zinc-900/60 px-4 py-2.5 rounded-lg border border-zinc-800">
+      <span id="current-path" class="text-sm text-zinc-400 font-mono truncate">/quark</span>
+      <button onclick="goBack()" class="text-xs px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition">返回上一级</button>
+    </div>
+    <div id="grid-container" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6"></div>
+  </main>
+
+  <script>
+    // ================= 1. 核心配置区 =================
+    const ALIST_DOMAIN = 'https://pan.quark.cn/list#/list/all'; // 改成你的网盘域名（末尾不要带斜杠）
+    const QUARK_ROOT = '/quark';                     // 夸克在后台的挂载路径
+
+    // 手动精选海报列表（全走夸克直链）
+    const POSTER_LIST = [
+      {
+        title: "示例电影 1 (夸克 MP4)",
+        tag: "4K HDR",
+        cover: "https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=600&q=80",
+        url: `${ALIST_DOMAIN}/d/quark/Movies/sample.mp4`
+      },
+      {
+        title: "示例剧集 2 (夸克 HLS)",
+        tag: "1080P",
+        cover: "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=600&q=80",
+        url: `${ALIST_DOMAIN}/d/quark/TV/index.m3u8`
+      }
+    ];
+
+    let art = null;
+    let currentFolder = QUARK_ROOT;
+
+    // ================= 2. 渲染卡片（支持文件夹下钻 + 视频播放） =================
+    function renderCards(items) {
+      const container = document.getElementById('grid-container');
+      if (!items.length) {
+        container.innerHTML = `<div class="col-span-full text-center text-zinc-500 py-12">当前目录没有找到视频或文件夹</div>`;
+        return;
+      }
+      container.innerHTML = items.map(item => {
+        const clickAction = item.isDir
+          ? `loadFromQuark('${item.path.replace(/'/g, "\\'")}')`
+          : `openPlayer('${item.title.replace(/'/g, "\\'")}', '${item.url}')`;
+
+        return `
+          <div onclick="${clickAction}" 
+               class="group cursor-pointer bg-zinc-900 rounded-xl overflow-hidden border border-zinc-800/80 hover:border-indigo-500/60 transition-all duration-300 hover:-translate-y-1 shadow-lg">
+            <div class="relative aspect-[2/3] bg-zinc-800 overflow-hidden">
+              <img src="${item.cover}" alt="${item.title}" loading="lazy" 
+                   class="w-full h-full object-cover group-hover:scale-105 transition duration-500"
+                   onerror="this.src='https://placehold.co/400x600/18181b/a1a1aa?text=QUARK'">
+              <span class="absolute top-2 right-2 bg-black/70 backdrop-blur text-xs px-2 py-0.5 rounded ${item.isDir ? 'text-amber-300' : 'text-indigo-300'}">${item.tag}</span>
+            </div>
+            <div class="p-3">
+              <h3 class="text-sm font-medium text-zinc-200 group-hover:text-indigo-400 truncate">${item.title}</h3>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // ================= 3. 动态拉取夸克网盘目录 =================
+    async function loadFromQuark(path) {
+      currentFolder = path;
+      document.getElementById('mode-badge').innerText = '夸克目录';
+      document.getElementById('breadcrumb').classList.remove('hidden');
+      document.getElementById('current-path').innerText = path;
+
+      const container = document.getElementById('grid-container');
+      container.innerHTML = `<div class="col-span-full text-center text-zinc-400 py-12">正在读取 ${path} ...</div>`;
